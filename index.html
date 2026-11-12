@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLY (Mesh/Point Cloud) to GLB</title>
+    <title>PLY / SPLAT to GLB Converter</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -55,15 +55,15 @@
 <body>
 
     <div class="container">
-        <h2>Konverter PLY ke GLB</h2>
-        <p class="subtitle">(Support Point Cloud & Solid Mesh)</p>
+        <h2>Konverter PLY / SPLAT ke GLB</h2>
+        <p class="subtitle">(Support Solid Mesh, Point Cloud, & 3DGS Splat)</p>
         
-        <label>1. Masukkan File Model (.ply)</label>
-        <input type="file" id="plyInput" accept=".ply">
+        <label>1. Masukkan File Model (.ply atau .splat)</label>
+        <input type="file" id="modelInput" accept=".ply, .splat">
 
         <label>2. Masukkan File Tekstur (.jpg / .png) - Opsional</label>
         <input type="file" id="textureInput" accept="image/png, image/jpeg">
-        <small style="color:#777; font-size: 0.75rem;">*Jika model adalah Point Cloud, gambar akan menjadi corak titik-titiknya.</small>
+        <small style="color:#777; font-size: 0.75rem;">*Untuk Point Cloud/Splat, gambar akan jadi corak partikel titik-titiknya.</small>
 
         <button id="convertBtn">Konversi & Download .GLB</button>
         <div id="status"></div>
@@ -72,7 +72,7 @@
     <!-- Import Maps Polyfill -->
     <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
     
-    <!-- Setup Import Map untuk mengambil Three.js dari CDN -->
+    <!-- Setup Import Map untuk mengambil Three.js -->
     <script type="importmap">
         {
             "imports": {
@@ -87,14 +87,45 @@
         import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
         import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
-        const plyInput = document.getElementById('plyInput');
+        const modelInput = document.getElementById('modelInput');
         const textureInput = document.getElementById('textureInput');
         const convertBtn = document.getElementById('convertBtn');
         const status = document.getElementById('status');
 
+        // Fungsi khusus untuk membaca file .splat biner (Antimatter15 format)
+        function parseSplatToGeometry(buffer) {
+            const u8 = new Uint8Array(buffer);
+            const f32 = new Float32Array(buffer);
+            // Setiap splat berukuran 32 byte
+            const numSplats = Math.floor(buffer.byteLength / 32); 
+
+            const positions = new Float32Array(numSplats * 3);
+            const colors = new Float32Array(numSplats * 3);
+
+            for (let i = 0; i < numSplats; i++) {
+                // Posisi X, Y, Z (12 byte pertama -> index float ke 0, 1, 2)
+                positions[i*3 + 0] = f32[i*8 + 0];
+                positions[i*3 + 1] = f32[i*8 + 1];
+                positions[i*3 + 2] = f32[i*8 + 2];
+
+                // Warna R, G, B (berada di byte ke 24, 25, 26)
+                const colorBase = i * 32 + 24;
+                colors[i*3 + 0] = u8[colorBase + 0] / 255.0;
+                colors[i*3 + 1] = u8[colorBase + 1] / 255.0;
+                colors[i*3 + 2] = u8[colorBase + 2] / 255.0;
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.index = null; // Tandai ini sebagai point cloud (bukan solid)
+            
+            return geometry;
+        }
+
         convertBtn.addEventListener('click', async () => {
-            if (!plyInput.files.length) {
-                alert('Harap pilih file .ply terlebih dahulu!');
+            if (!modelInput.files.length) {
+                alert('Harap pilih file .ply atau .splat terlebih dahulu!');
                 return;
             }
 
@@ -103,27 +134,38 @@
             convertBtn.disabled = true;
 
             try {
-                // 1. Baca file PLY
-                const plyFile = plyInput.files[0];
-                const plyBuffer = await plyFile.arrayBuffer();
+                const modelFile = modelInput.files[0];
+                const fileName = modelFile.name.toLowerCase();
+                const fileBuffer = await modelFile.arrayBuffer();
                 
-                const plyLoader = new PLYLoader();
-                const geometry = plyLoader.parse(plyBuffer);
+                let geometry;
+
+                // 1. Baca berdasarkan ekstensi file
+                if (fileName.endsWith('.splat')) {
+                    console.log("File .splat terdeteksi!");
+                    geometry = parseSplatToGeometry(fileBuffer);
+                } else if (fileName.endsWith('.ply')) {
+                    console.log("File .ply terdeteksi!");
+                    const plyLoader = new PLYLoader();
+                    geometry = plyLoader.parse(fileBuffer);
+                } else {
+                    throw new Error("Format file tidak didukung. Gunakan .ply atau .splat");
+                }
                 
                 let object3D;
 
-                // 2. Cek apakah ini Point Cloud (tidak punya index face) atau Mesh Solid
+                // 2. Cek apakah ini Point Cloud / Splat (tidak punya index face) atau Mesh Solid
                 if (geometry.index === null) {
-                    console.log("Point Cloud terdeteksi!");
+                    console.log("Point Cloud / Splat Diproses!");
                     
                     // Material khusus untuk Point Cloud
                     const pointsMaterial = new THREE.PointsMaterial({
-                        size: 0.05, // Ukuran titik (ubah jika titik terlalu besar/kecil di hasil akhir)
-                        vertexColors: geometry.hasAttribute('color'), // Pertahankan warna asli
+                        size: 0.05, // Ubah ukuran partikel di sini jika kebesaran/kekecilan
+                        vertexColors: geometry.hasAttribute('color'), 
                         sizeAttenuation: true
                     });
 
-                    // Jika ada tekstur dimasukkan ke point cloud
+                    // Terapkan Tekstur jika ada
                     if (textureInput.files.length > 0) {
                         const texFile = textureInput.files[0];
                         const texUrl = URL.createObjectURL(texFile);
@@ -133,17 +175,16 @@
                         
                         pointsMaterial.map = texture;
                         pointsMaterial.transparent = true;
-                        pointsMaterial.alphaTest = 0.5;
+                        pointsMaterial.alphaTest = 0.1;
                     }
 
                     object3D = new THREE.Points(geometry, pointsMaterial);
 
                 } else {
-                    console.log("3D Mesh Solid terdeteksi!");
-                    geometry.computeVertexNormals(); // Hitung pencahayaan
+                    console.log("3D Mesh Solid Diproses!");
+                    geometry.computeVertexNormals(); 
                     
                     let material;
-                    // Jika ada tekstur dimasukkan ke mesh solid
                     if (textureInput.files.length > 0) {
                         const texFile = textureInput.files[0];
                         const texUrl = URL.createObjectURL(texFile);
@@ -152,7 +193,6 @@
                         texture.colorSpace = THREE.SRGBColorSpace;
                         material = new THREE.MeshStandardMaterial({ map: texture });
                     } else {
-                        // Jika model solid punya warna vertex bawaan, gunakan warna tersebut
                         const hasColors = geometry.hasAttribute('color');
                         material = new THREE.MeshStandardMaterial({ 
                             color: hasColors ? 0xffffff : 0xcccccc,
@@ -162,7 +202,7 @@
                     object3D = new THREE.Mesh(geometry, material);
                 }
 
-                // 3. Gabungkan dalam Scene
+                // 3. Masukkan ke Scene
                 const scene = new THREE.Scene();
                 scene.add(object3D);
 
@@ -178,7 +218,8 @@
                         link.style.display = 'none';
                         link.href = url;
                         
-                        let originalName = plyFile.name.replace('.ply', '');
+                        // Buat nama file dari aslinya
+                        let originalName = modelFile.name.replace(/\.(ply|splat)$/i, '');
                         link.download = originalName + '_converted.glb';
                         
                         document.body.appendChild(link);
@@ -196,13 +237,13 @@
                         status.innerText = "Gagal mengekspor file.";
                         convertBtn.disabled = false;
                     },
-                    { binary: true } // Ekspor ke format binary .glb
+                    { binary: true } // Ekspor format .glb
                 );
 
             } catch (err) {
                 console.error(err);
                 status.style.color = "red";
-                status.innerText = "Error: Terjadi kesalahan saat memproses file.";
+                status.innerText = "Error: " + err.message;
                 convertBtn.disabled = false;
             }
         });
