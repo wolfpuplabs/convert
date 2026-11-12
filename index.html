@@ -3,76 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLY / SPLAT to GLB Converter</title>
+    <title>Konverter PLY Binary ke GLB</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f4f9;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-            max-width: 450px;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-        h2 { margin-top: 0; font-size: 1.2rem; text-align: center; margin-bottom: 5px;}
-        p.subtitle { text-align: center; font-size: 0.85rem; color: #666; margin-top: 0; }
-        label { font-weight: bold; font-size: 0.9rem; margin-top: 10px;}
-        input[type="file"] {
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 0.9rem;
-        }
-        button {
-            margin-top: 15px;
-            padding: 12px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f0f0; margin: 0; }
+        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+        input[type="file"] { margin: 1rem 0; }
+        button { padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #0056b3; }
-        button:disabled { background-color: #cccccc; cursor: not-allowed; }
-        #status { font-size: 0.9rem; text-align: center; color: #555; font-weight: bold; margin-top: 10px; min-height: 20px;}
+        #status { margin-top: 1rem; color: #555; font-size: 0.9em; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h2>Konverter PLY / SPLAT ke GLB</h2>
-        <p class="subtitle">(Support Solid Mesh, Point Cloud, & 3DGS Splat)</p>
-        
-        <label>1. Masukkan File Model (.ply atau .splat)</label>
-        <input type="file" id="modelInput" accept=".ply, .splat">
-
-        <label>2. Masukkan File Tekstur (.jpg / .png) - Opsional</label>
-        <input type="file" id="textureInput" accept="image/png, image/jpeg">
-        <small style="color:#777; font-size: 0.75rem;">*Untuk Point Cloud/Splat, gambar akan jadi corak partikel titik-titiknya.</small>
-
-        <button id="convertBtn">Konversi & Download .GLB</button>
-        <div id="status"></div>
+        <h2>Konverter PLY (Point Cloud) ke GLB</h2>
+        <input type="file" id="fileInput" accept=".ply">
+        <br>
+        <button id="convertBtn">Konversi & Download GLB</button>
+        <div id="status">Pilih file .ply untuk memulai.</div>
     </div>
 
-    <!-- Import Maps Polyfill -->
-    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
-    
-    <!-- Setup Import Map untuk mengambil Three.js -->
+    <!-- Import Maps untuk Three.js -->
     <script type="importmap">
         {
             "imports": {
@@ -81,171 +32,79 @@
             }
         }
     </script>
-
     <script type="module">
         import * as THREE from 'three';
         import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
         import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
-        const modelInput = document.getElementById('modelInput');
-        const textureInput = document.getElementById('textureInput');
+        const fileInput = document.getElementById('fileInput');
         const convertBtn = document.getElementById('convertBtn');
         const status = document.getElementById('status');
 
-        // Fungsi khusus untuk membaca file .splat biner (Antimatter15 format)
-        function parseSplatToGeometry(buffer) {
-            const u8 = new Uint8Array(buffer);
-            const f32 = new Float32Array(buffer);
-            // Setiap splat berukuran 32 byte
-            const numSplats = Math.floor(buffer.byteLength / 32); 
-
-            const positions = new Float32Array(numSplats * 3);
-            const colors = new Float32Array(numSplats * 3);
-
-            for (let i = 0; i < numSplats; i++) {
-                // Posisi X, Y, Z (12 byte pertama -> index float ke 0, 1, 2)
-                positions[i*3 + 0] = f32[i*8 + 0];
-                positions[i*3 + 1] = f32[i*8 + 1];
-                positions[i*3 + 2] = f32[i*8 + 2];
-
-                // Warna R, G, B (berada di byte ke 24, 25, 26)
-                const colorBase = i * 32 + 24;
-                colors[i*3 + 0] = u8[colorBase + 0] / 255.0;
-                colors[i*3 + 1] = u8[colorBase + 1] / 255.0;
-                colors[i*3 + 2] = u8[colorBase + 2] / 255.0;
-            }
-
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            geometry.index = null; // Tandai ini sebagai point cloud (bukan solid)
-            
-            return geometry;
-        }
-
-        convertBtn.addEventListener('click', async () => {
-            if (!modelInput.files.length) {
-                alert('Harap pilih file .ply atau .splat terlebih dahulu!');
+        convertBtn.addEventListener('click', () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                status.innerText = "Error: Tidak ada file yang dipilih.";
+                status.style.color = "red";
                 return;
             }
 
-            status.style.color = "#007bff";
-            status.innerText = "Memproses... Mohon tunggu.";
-            convertBtn.disabled = true;
+            status.innerText = "Membaca file PLY...";
+            status.style.color = "black";
 
-            try {
-                const modelFile = modelInput.files[0];
-                const fileName = modelFile.name.toLowerCase();
-                const fileBuffer = await modelFile.arrayBuffer();
-                
-                let geometry;
-
-                // 1. Baca berdasarkan ekstensi file
-                if (fileName.endsWith('.splat')) {
-                    console.log("File .splat terdeteksi!");
-                    geometry = parseSplatToGeometry(fileBuffer);
-                } else if (fileName.endsWith('.ply')) {
-                    console.log("File .ply terdeteksi!");
-                    const plyLoader = new PLYLoader();
-                    geometry = plyLoader.parse(fileBuffer);
-                } else {
-                    throw new Error("Format file tidak didukung. Gunakan .ply atau .splat");
-                }
-                
-                let object3D;
-
-                // 2. Cek apakah ini Point Cloud / Splat (tidak punya index face) atau Mesh Solid
-                if (geometry.index === null) {
-                    console.log("Point Cloud / Splat Diproses!");
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    status.innerText = "Memproses geometri (Point Cloud)...";
                     
-                    // Material khusus untuk Point Cloud
-                    const pointsMaterial = new THREE.PointsMaterial({
-                        size: 0.05, // Ubah ukuran partikel di sini jika kebesaran/kekecilan
-                        vertexColors: geometry.hasAttribute('color'), 
-                        sizeAttenuation: true
+                    const loader = new PLYLoader();
+                    const geometry = loader.parse(event.target.result);
+                    
+                    // Membuat material untuk point cloud
+                    const material = new THREE.PointsMaterial({ 
+                        size: 0.05, 
+                        vertexColors: geometry.hasAttribute('color') 
                     });
-
-                    // Terapkan Tekstur jika ada
-                    if (textureInput.files.length > 0) {
-                        const texFile = textureInput.files[0];
-                        const texUrl = URL.createObjectURL(texFile);
-                        const textureLoader = new THREE.TextureLoader();
-                        const texture = await textureLoader.loadAsync(texUrl);
-                        texture.colorSpace = THREE.SRGBColorSpace;
-                        
-                        pointsMaterial.map = texture;
-                        pointsMaterial.transparent = true;
-                        pointsMaterial.alphaTest = 0.1;
-                    }
-
-                    object3D = new THREE.Points(geometry, pointsMaterial);
-
-                } else {
-                    console.log("3D Mesh Solid Diproses!");
-                    geometry.computeVertexNormals(); 
                     
-                    let material;
-                    if (textureInput.files.length > 0) {
-                        const texFile = textureInput.files[0];
-                        const texUrl = URL.createObjectURL(texFile);
-                        const textureLoader = new THREE.TextureLoader();
-                        const texture = await textureLoader.loadAsync(texUrl);
-                        texture.colorSpace = THREE.SRGBColorSpace;
-                        material = new THREE.MeshStandardMaterial({ map: texture });
-                    } else {
-                        const hasColors = geometry.hasAttribute('color');
-                        material = new THREE.MeshStandardMaterial({ 
-                            color: hasColors ? 0xffffff : 0xcccccc,
-                            vertexColors: hasColors 
-                        });
-                    }
-                    object3D = new THREE.Mesh(geometry, material);
-                }
+                    const points = new THREE.Points(geometry, material);
+                    
+                    const scene = new THREE.Scene();
+                    scene.add(points);
 
-                // 3. Masukkan ke Scene
-                const scene = new THREE.Scene();
-                scene.add(object3D);
+                    status.innerText = "Mengekspor ke GLB...";
 
-                // 4. Ekspor ke GLB
-                const exporter = new GLTFExporter();
-                exporter.parse(
-                    scene,
-                    function (gltf) {
+                    const exporter = new GLTFExporter();
+                    exporter.parse(scene, function (gltf) {
                         const blob = new Blob([gltf], { type: 'application/octet-stream' });
                         const url = URL.createObjectURL(blob);
-                        
                         const link = document.createElement('a');
                         link.style.display = 'none';
                         link.href = url;
-                        
-                        // Buat nama file dari aslinya
-                        let originalName = modelFile.name.replace(/\.(ply|splat)$/i, '');
-                        link.download = originalName + '_converted.glb';
-                        
+                        link.download = file.name.replace('.ply', '.glb');
                         document.body.appendChild(link);
                         link.click();
                         document.body.removeChild(link);
                         URL.revokeObjectURL(url);
-
+                        
+                        status.innerText = "Konversi berhasil! File sedang didownload.";
                         status.style.color = "green";
-                        status.innerText = "Selesai! File GLB berhasil didownload.";
-                        convertBtn.disabled = false;
-                    },
-                    function (error) {
-                        console.error(error);
+                    }, function (error) {
+                        status.innerText = "Error saat mengekspor GLB: " + error.message;
                         status.style.color = "red";
-                        status.innerText = "Gagal mengekspor file.";
-                        convertBtn.disabled = false;
-                    },
-                    { binary: true } // Ekspor format .glb
-                );
-
-            } catch (err) {
-                console.error(err);
+                    }, { binary: true });
+                } catch (e) {
+                    status.innerText = "Error: File PLY rusak atau format tidak didukung.";
+                    status.style.color = "red";
+                    console.error(e);
+                }
+            };
+            
+            reader.onerror = function() {
+                status.innerText = "Error membaca file.";
                 status.style.color = "red";
-                status.innerText = "Error: " + err.message;
-                convertBtn.disabled = false;
-            }
+            };
+
+            reader.readAsArrayBuffer(file);
         });
     </script>
 </body>
