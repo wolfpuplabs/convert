@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLY to GLB Converter</title>
+    <title>PLY (Mesh/Point Cloud) to GLB</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -20,14 +20,15 @@
             padding: 30px;
             border-radius: 10px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-            max-width: 400px;
+            max-width: 450px;
             width: 100%;
             display: flex;
             flex-direction: column;
             gap: 15px;
         }
-        h2 { margin-top: 0; font-size: 1.2rem; text-align: center; }
-        label { font-weight: bold; font-size: 0.9rem; }
+        h2 { margin-top: 0; font-size: 1.2rem; text-align: center; margin-bottom: 5px;}
+        p.subtitle { text-align: center; font-size: 0.85rem; color: #666; margin-top: 0; }
+        label { font-weight: bold; font-size: 0.9rem; margin-top: 10px;}
         input[type="file"] {
             padding: 8px;
             border: 1px solid #ccc;
@@ -35,6 +36,7 @@
             font-size: 0.9rem;
         }
         button {
+            margin-top: 15px;
             padding: 12px;
             background-color: #007bff;
             color: white;
@@ -47,19 +49,21 @@
         }
         button:hover { background-color: #0056b3; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
-        #status { font-size: 0.9rem; text-align: center; color: #555; font-weight: bold; }
+        #status { font-size: 0.9rem; text-align: center; color: #555; font-weight: bold; margin-top: 10px; min-height: 20px;}
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h2>Konverter .PLY ke .GLB</h2>
+        <h2>Konverter PLY ke GLB</h2>
+        <p class="subtitle">(Support Point Cloud & Solid Mesh)</p>
         
         <label>1. Masukkan File Model (.ply)</label>
         <input type="file" id="plyInput" accept=".ply">
 
-        <label>2. Masukkan File Tekstur (.jpg / .png)</label>
+        <label>2. Masukkan File Tekstur (.jpg / .png) - Opsional</label>
         <input type="file" id="textureInput" accept="image/png, image/jpeg">
+        <small style="color:#777; font-size: 0.75rem;">*Jika model adalah Point Cloud, gambar akan menjadi corak titik-titiknya.</small>
 
         <button id="convertBtn">Konversi & Download .GLB</button>
         <div id="status"></div>
@@ -106,33 +110,61 @@
                 const plyLoader = new PLYLoader();
                 const geometry = plyLoader.parse(plyBuffer);
                 
-                // Hitung normal agar lighting di GLB bisa dirender dengan baik
-                geometry.computeVertexNormals();
+                let object3D;
 
-                let material;
-                
-                // 2. Baca file Tekstur (jika dimasukkan)
-                if (textureInput.files.length > 0) {
-                    const texFile = textureInput.files[0];
-                    const texUrl = URL.createObjectURL(texFile);
-
-                    const textureLoader = new THREE.TextureLoader();
-                    const texture = await new Promise((resolve, reject) => {
-                        textureLoader.load(texUrl, resolve, undefined, reject);
-                    });
+                // 2. Cek apakah ini Point Cloud (tidak punya index face) atau Mesh Solid
+                if (geometry.index === null) {
+                    console.log("Point Cloud terdeteksi!");
                     
-                    texture.colorSpace = THREE.SRGBColorSpace;
-                    // Buat material menggunakan tekstur
-                    material = new THREE.MeshStandardMaterial({ map: texture });
+                    // Material khusus untuk Point Cloud
+                    const pointsMaterial = new THREE.PointsMaterial({
+                        size: 0.05, // Ukuran titik (ubah jika titik terlalu besar/kecil di hasil akhir)
+                        vertexColors: geometry.hasAttribute('color'), // Pertahankan warna asli
+                        sizeAttenuation: true
+                    });
+
+                    // Jika ada tekstur dimasukkan ke point cloud
+                    if (textureInput.files.length > 0) {
+                        const texFile = textureInput.files[0];
+                        const texUrl = URL.createObjectURL(texFile);
+                        const textureLoader = new THREE.TextureLoader();
+                        const texture = await textureLoader.loadAsync(texUrl);
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        
+                        pointsMaterial.map = texture;
+                        pointsMaterial.transparent = true;
+                        pointsMaterial.alphaTest = 0.5;
+                    }
+
+                    object3D = new THREE.Points(geometry, pointsMaterial);
+
                 } else {
-                    // Material default jika tidak ada tekstur
-                    material = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+                    console.log("3D Mesh Solid terdeteksi!");
+                    geometry.computeVertexNormals(); // Hitung pencahayaan
+                    
+                    let material;
+                    // Jika ada tekstur dimasukkan ke mesh solid
+                    if (textureInput.files.length > 0) {
+                        const texFile = textureInput.files[0];
+                        const texUrl = URL.createObjectURL(texFile);
+                        const textureLoader = new THREE.TextureLoader();
+                        const texture = await textureLoader.loadAsync(texUrl);
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        material = new THREE.MeshStandardMaterial({ map: texture });
+                    } else {
+                        // Jika model solid punya warna vertex bawaan, gunakan warna tersebut
+                        const hasColors = geometry.hasAttribute('color');
+                        material = new THREE.MeshStandardMaterial({ 
+                            color: hasColors ? 0xffffff : 0xcccccc,
+                            vertexColors: hasColors 
+                        });
+                    }
+                    object3D = new THREE.Mesh(geometry, material);
                 }
 
                 // 3. Gabungkan dalam Scene
-                const mesh = new THREE.Mesh(geometry, material);
                 const scene = new THREE.Scene();
-                scene.add(mesh);
+                scene.add(object3D);
 
                 // 4. Ekspor ke GLB
                 const exporter = new GLTFExporter();
@@ -145,9 +177,9 @@
                         const link = document.createElement('a');
                         link.style.display = 'none';
                         link.href = url;
-                        // Hapus ektensi .ply lalu ganti ke .glb
+                        
                         let originalName = plyFile.name.replace('.ply', '');
-                        link.download = originalName + '_textured.glb';
+                        link.download = originalName + '_converted.glb';
                         
                         document.body.appendChild(link);
                         link.click();
@@ -155,7 +187,7 @@
                         URL.revokeObjectURL(url);
 
                         status.style.color = "green";
-                        status.innerText = "Selesai! File berhasil didownload.";
+                        status.innerText = "Selesai! File GLB berhasil didownload.";
                         convertBtn.disabled = false;
                     },
                     function (error) {
@@ -164,13 +196,13 @@
                         status.innerText = "Gagal mengekspor file.";
                         convertBtn.disabled = false;
                     },
-                    { binary: true } // Opsi binary: true artinya kita ingin format .glb (bukan .gltf)
+                    { binary: true } // Ekspor ke format binary .glb
                 );
 
             } catch (err) {
                 console.error(err);
                 status.style.color = "red";
-                status.innerText = "Error: Terjadi kesalahan saat membaca file.";
+                status.innerText = "Error: Terjadi kesalahan saat memproses file.";
                 convertBtn.disabled = false;
             }
         });
