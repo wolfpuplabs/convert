@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLY to GLB Converter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        h2 { margin-top: 0; font-size: 1.2rem; text-align: center; }
+        label { font-weight: bold; font-size: 0.9rem; }
+        input[type="file"] {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+        button {
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #status { font-size: 0.9rem; text-align: center; color: #555; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Konverter .PLY ke .GLB</h2>
+        
+        <label>1. Masukkan File Model (.ply)</label>
+        <input type="file" id="plyInput" accept=".ply">
+
+        <label>2. Masukkan File Tekstur (.jpg / .png)</label>
+        <input type="file" id="textureInput" accept="image/png, image/jpeg">
+
+        <button id="convertBtn">Konversi & Download .GLB</button>
+        <div id="status"></div>
+    </div>
+
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    
+    <!-- Setup Import Map untuk mengambil Three.js dari CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const plyInput = document.getElementById('plyInput');
+        const textureInput = document.getElementById('textureInput');
+        const convertBtn = document.getElementById('convertBtn');
+        const status = document.getElementById('status');
+
+        convertBtn.addEventListener('click', async () => {
+            if (!plyInput.files.length) {
+                alert('Harap pilih file .ply terlebih dahulu!');
+                return;
+            }
+
+            status.style.color = "#007bff";
+            status.innerText = "Memproses... Mohon tunggu.";
+            convertBtn.disabled = true;
+
+            try {
+                // 1. Baca file PLY
+                const plyFile = plyInput.files[0];
+                const plyBuffer = await plyFile.arrayBuffer();
+                
+                const plyLoader = new PLYLoader();
+                const geometry = plyLoader.parse(plyBuffer);
+                
+                // Hitung normal agar lighting di GLB bisa dirender dengan baik
+                geometry.computeVertexNormals();
+
+                let material;
+                
+                // 2. Baca file Tekstur (jika dimasukkan)
+                if (textureInput.files.length > 0) {
+                    const texFile = textureInput.files[0];
+                    const texUrl = URL.createObjectURL(texFile);
+
+                    const textureLoader = new THREE.TextureLoader();
+                    const texture = await new Promise((resolve, reject) => {
+                        textureLoader.load(texUrl, resolve, undefined, reject);
+                    });
+                    
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    // Buat material menggunakan tekstur
+                    material = new THREE.MeshStandardMaterial({ map: texture });
+                } else {
+                    // Material default jika tidak ada tekstur
+                    material = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+                }
+
+                // 3. Gabungkan dalam Scene
+                const mesh = new THREE.Mesh(geometry, material);
+                const scene = new THREE.Scene();
+                scene.add(mesh);
+
+                // 4. Ekspor ke GLB
+                const exporter = new GLTFExporter();
+                exporter.parse(
+                    scene,
+                    function (gltf) {
+                        const blob = new Blob([gltf], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        
+                        const link = document.createElement('a');
+                        link.style.display = 'none';
+                        link.href = url;
+                        // Hapus ektensi .ply lalu ganti ke .glb
+                        let originalName = plyFile.name.replace('.ply', '');
+                        link.download = originalName + '_textured.glb';
+                        
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+
+                        status.style.color = "green";
+                        status.innerText = "Selesai! File berhasil didownload.";
+                        convertBtn.disabled = false;
+                    },
+                    function (error) {
+                        console.error(error);
+                        status.style.color = "red";
+                        status.innerText = "Gagal mengekspor file.";
+                        convertBtn.disabled = false;
+                    },
+                    { binary: true } // Opsi binary: true artinya kita ingin format .glb (bukan .gltf)
+                );
+
+            } catch (err) {
+                console.error(err);
+                status.style.color = "red";
+                status.innerText = "Error: Terjadi kesalahan saat membaca file.";
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
